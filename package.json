@@ -1,0 +1,28 @@
+{
+  "name": "orangescada-driver",
+  "version": "0.1.0",
+  "description": "OrangeScada universal driver for Node-RED",
+  "main": "nodes/driver.js",
+  "scripts": {
+    "start": "node-red -u .",
+    "check": "node -c nodes/driver.js"
+  },
+  "keywords": [
+    "node-red",
+    "orangescada",
+    "scada",
+    "driver"
+  ],
+  "node-red": {
+    "nodes": {
+      "driver": "nodes/driver.js"
+    }
+  },
+  "engines": {
+    "node": ">=16"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "node-red": "^4.1.11"
+  }
+}

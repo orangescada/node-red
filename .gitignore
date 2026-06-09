@@ -1,0 +1,11 @@
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# Node-RED runtime data created by `node-red -u .`
+flows.json
+flows_cred.json
+settings.js
+.config.*.json
+.config.*.json.backup
+

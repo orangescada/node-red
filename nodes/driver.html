@@ -1,0 +1,81 @@
+<script type="text/javascript">
+  RED.nodes.registerType("orangescada-driver", {
+    category: "network",
+    color: "#d8e8ff",
+    defaults: {
+      name: { value: "" },
+      host: { value: "192.168.0.102", required: true },
+      port: { value: 8891, required: true, validate: RED.validators.number() },
+      ssl: { value: false },
+      uid: { value: "nodered", required: true },
+      version: { value: "0.1.0" },
+      versionApi: { value: "1.1" },
+      reconnectMs: { value: 5000, validate: RED.validators.number() },
+    },
+    credentials: {
+      password: { type: "password" },
+    },
+    inputs: 0,
+    outputs: 1,
+    icon: "bridge.svg",
+    label: function () {
+      return this.name || "orangescada driver";
+    },
+  });
+</script>
+
+<script type="text/html" data-template-name="orangescada-driver">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-host"><i class="fa fa-globe"></i> Host</label>
+    <input type="text" id="node-input-host" placeholder="192.168.0.102" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-port"><i class="fa fa-plug"></i> Port</label>
+    <input type="number" id="node-input-port" placeholder="8891" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-ssl"><i class="fa fa-lock"></i> SSL</label>
+    <input
+      type="checkbox"
+      id="node-input-ssl"
+      style="display:inline-block; width:auto; vertical-align:top;"
+    />
+  </div>
+  <div class="form-row">
+    <label for="node-input-uid"><i class="fa fa-id-card"></i> Driver UID</label>
+    <input type="text" id="node-input-uid" placeholder="nodered" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-password"><i class="fa fa-key"></i> Password</label>
+    <input type="password" id="node-input-password" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-version">
+      <i class="fa fa-code-fork"></i> Version
+    </label>
+    <input type="text" id="node-input-version" placeholder="0.1.0" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-versionApi"><i class="fa fa-code"></i> API</label>
+    <input type="text" id="node-input-versionApi" placeholder="1.1" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-reconnectMs">
+      <i class="fa fa-refresh"></i> Reconnect
+    </label>
+    <input type="number" id="node-input-reconnectMs" placeholder="5000" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="orangescada-driver">
+  <p>Connects Node-RED to OrangeScada as a universal API driver.</p>
+  <p>
+    Current minimal implementation supports <code>connect</code> and
+    <code>pingDriver</code>.
+  </p>
+</script>
+
