@@ -10,8 +10,8 @@ const DEFAULT_VERSION = "0.1.0";
 const DEFAULT_VERSION_API = "1.1";
 const DEFAULT_RECONNECT_MS = 5000;
 
-module.exports = function registerOrangeScadaDriver(RED) {
-  function OrangeScadaDriver(config) {
+module.exports = function registerOrangeScadaNodes(RED) {
+  function driverConfig(config) {
     RED.nodes.createNode(this, config);
 
     const node = this;
@@ -32,10 +32,7 @@ module.exports = function registerOrangeScadaDriver(RED) {
     let connected = false;
     let stopping = false;
     let reconnectTimer = null;
-
-    function status(fill, shape, text) {
-      node.status({ fill, shape, text });
-    }
+    const tags = new Map();
 
     function send(packet) {
       if (!socket || !connected) return false;
@@ -57,8 +54,13 @@ module.exports = function registerOrangeScadaDriver(RED) {
       send(packet);
     }
 
-    function reply(request) {
-      return send({ cmd: request.cmd, transID: request.transID });
+    function reply(request, data) {
+      return send(
+        Object.assign(
+          { cmd: request.cmd, transID: request.transID },
+          data || {},
+        ),
+      );
     }
 
     function errorReply(request, errorTxt) {
@@ -69,18 +71,134 @@ module.exports = function registerOrangeScadaDriver(RED) {
       });
     }
 
+    function uniqueByUid(items) {
+      return Array.from(
+        items
+          .filter((item) => item && item.uid)
+          .reduce((acc, item) => {
+            if (!acc.has(item.uid)) acc.set(item.uid, item);
+            return acc;
+          }, new Map())
+          .values(),
+      );
+    }
+
+    function findNode(uid) {
+      return uniqueByUid(Array.from(tags.values()).map((tag) => tag.node)).find(
+        (item) => item.uid === uid,
+      );
+    }
+
+    function findDevice(uid) {
+      return uniqueByUid(
+        Array.from(tags.values()).map((tag) => tag.device),
+      ).find((item) => item.uid === uid);
+    }
+
+    function findTag(deviceUid, tagUid) {
+      return Array.from(tags.values()).find(
+        (tag) => tag.device.uid === deviceUid && tag.uid === tagUid,
+      );
+    }
+
+    function getNodes() {
+      return uniqueByUid(Array.from(tags.values()).map((tag) => tag.node)).map(
+        (item) => ({
+          uid: item.uid,
+          name: item.name,
+        }),
+      );
+    }
+
+    function getDevices(nodeUid) {
+      return uniqueByUid(
+        Array.from(tags.values())
+          .filter((tag) => !nodeUid || tag.node.uid === nodeUid)
+          .map((tag) => tag.device),
+      ).map((item) => ({
+        uid: item.uid,
+        name: item.name,
+        nodeUid: item.nodeUid,
+      }));
+    }
+
+    function getTags(deviceUid, includeOptions) {
+      return Array.from(tags.values())
+        .filter((tag) => tag.device.uid === deviceUid)
+        .map((tag) => {
+          const item = {
+            uid: tag.uid,
+            name: tag.name,
+            address: tag.address,
+            type: tag.type,
+            read: true,
+            write: true,
+          };
+          if (includeOptions) item.options = {};
+          return item;
+        });
+    }
+
+    function handleGetNode(request) {
+      if (!request.uid) return reply(request, { options: [] });
+      const item = findNode(request.uid);
+      if (!item) return errorReply(request, "ID not found");
+      return reply(request, { name: item.name, options: [] });
+    }
+
+    function handleGetDevice(request) {
+      if (!request.uid) return reply(request, { options: [] });
+      const item = findDevice(request.uid);
+      if (!item) return errorReply(request, "ID not found");
+      return reply(request, { name: item.name, options: [] });
+    }
+
+    function handleGetTag(request) {
+      if (!request.deviceUid) return errorReply(request, "Device ID not found");
+      if (!request.uid) return reply(request, { options: [] });
+      const item = findTag(request.deviceUid, request.uid);
+      if (!item) return errorReply(request, "ID not found");
+      return reply(request, {
+        name: item.name,
+        address: item.address,
+        type: item.type,
+        read: true,
+        write: true,
+        options: [],
+      });
+    }
+
     function handlePacket(packet) {
       switch (packet.cmd) {
         case "connect":
           if (packet.errorCode === undefined || packet.errorCode === 0) {
-            status("green", "dot", "registered");
+            node.log("registered");
           } else {
-            status("red", "ring", `connect rejected: ${packet.errorCode}`);
+            node.error(`connect rejected: ${packet.errorCode}`);
           }
-          node.send({ topic: "orangescada/connect", payload: packet });
           return;
         case "pingDriver":
           return reply(packet);
+        case "getNodes":
+          return reply(packet, { nodes: getNodes() });
+        case "pingNode":
+          return reply(packet, { active: Boolean(findNode(packet.uid)) });
+        case "getNode":
+          return handleGetNode(packet);
+        case "getDevices":
+          return reply(packet, {
+            devices: getDevices(packet.nodeUid || packet.uid),
+          });
+        case "pingDevice":
+          return reply(packet, { active: Boolean(findDevice(packet.uid)) });
+        case "getDevice":
+          return handleGetDevice(packet);
+        case "getTags":
+          return reply(packet, {
+            tags: getTags(packet.deviceUid, packet.isOptions),
+          });
+        case "getTag":
+          return handleGetTag(packet);
         default:
           return errorReply(packet, "Command not implemented");
       }
@@ -90,7 +208,10 @@ module.exports = function registerOrangeScadaDriver(RED) {
       try {
         const packet = JSON.parse(line);
         node.log(`recv ${JSON.stringify(packet)}`);
-        handlePacket(packet);
+        Promise.resolve(handlePacket(packet)).catch((err) => {
+          node.error(`OrangeScada command error: ${err.message}`);
+          errorReply(packet, err.message);
+        });
       } catch (err) {
         node.error(`OrangeScada JSON parse error: ${err.message}`);
       }
@@ -126,14 +247,13 @@ module.exports = function registerOrangeScadaDriver(RED) {
 
     function onConnect() {
       connected = true;
-      status("yellow", "dot", "tcp connected");
+      node.log(`tcp connected ${host}:${port}`);
       sendConnect();
     }
 
     function connect() {
       if (socket || stopping) return;
 
-      status("yellow", "ring", "connecting");
       socket = ssl
         ? tls.connect({ host, port, rejectUnauthorized: false }, onConnect)
         : net.connect({ host, port }, onConnect);
@@ -141,11 +261,9 @@ module.exports = function registerOrangeScadaDriver(RED) {
       socket.on("data", handleData);
       socket.on("close", () => {
         disconnect();
-        status("red", "ring", "disconnected");
         scheduleReconnect();
       });
       socket.on("error", (err) => {
-        status("red", "ring", "error");
         node.error(err);
       });
     }
@@ -154,17 +272,94 @@ module.exports = function registerOrangeScadaDriver(RED) {
       stopping = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       disconnect();
-      status("", "", "");
       done();
     });
 
-    connect();
+    node.driverUid = uid;
+    node.registerTag = function registerTag(tag) {
+      tags.set(tag.id, tag);
+    };
+    node.unregisterTag = function unregisterTag(id) {
+      tags.delete(id);
+    };
+    setTimeout(connect, 0);
   }
 
-  RED.nodes.registerType("orangescada-driver", OrangeScadaDriver, {
+  function nodeConfig(config) {
+    RED.nodes.createNode(this, config);
+    this.uid = config.uid || config.id;
+    this.name = config.name;
+    this.driver = config.driver;
+  }
+
+  function deviceConfig(config) {
+    RED.nodes.createNode(this, config);
+    this.uid = config.uid || config.id;
+    this.name = config.name;
+    this.node = config.node;
+  }
+
+  function tag(config) {
+    RED.nodes.createNode(this, config);
+
+    const node = this;
+    node.driver = RED.nodes.getNode(config.driver);
+    node.commNode = RED.nodes.getNode(config.node);
+    node.device = RED.nodes.getNode(config.device);
+    node.tagUid = config.tagUid || config.id;
+    node.tagName = config.tagName;
+    node.tagType = config.tagType;
+    node.address = Number(config.address || 0);
+
+    function buildMeta() {
+      return {
+        driver: node.driver && node.driver.driverUid,
+        node: node.commNode && node.commNode.uid,
+        device: node.device && node.device.uid,
+        tag: node.tagUid,
+        type: node.tagType,
+      };
+    }
+
+    if (node.driver && node.commNode && node.device) {
+      node.driver.registerTag({
+        id: node.id,
+        uid: node.tagUid,
+        name: node.tagName,
+        type: node.tagType,
+        address: node.address,
+        node: {
+          id: node.commNode.id,
+          uid: node.commNode.uid,
+          name: node.commNode.name,
+        },
+        device: {
+          id: node.device.id,
+          uid: node.device.uid,
+          name: node.device.name,
+          nodeUid: node.commNode.uid,
+        },
+      });
+    }
+
+    node.on("input", (msg, send, done) => {
+      msg.orangescada = buildMeta();
+      send(msg);
+      if (done) done();
+    });
+
+    node.on("close", (removed, done) => {
+      if (node.driver) node.driver.unregisterTag(node.id);
+      done();
+    });
+  }
+
+  RED.nodes.registerType("orangescada-driver-config", driverConfig, {
     credentials: {
       password: { type: "password" },
     },
   });
+  RED.nodes.registerType("orangescada-node-config", nodeConfig);
+  RED.nodes.registerType("orangescada-device-config", deviceConfig);
+  RED.nodes.registerType("orangescada-tag", tag);
 };
-

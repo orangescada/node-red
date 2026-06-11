@@ -1,7 +1,47 @@
 <script type="text/javascript">
-  RED.nodes.registerType("orangescada-driver", {
-    category: "network",
-    color: "#d8e8ff",
+  function osUid(prefix) {
+    return (
+      prefix +
+      "-" +
+      Date.now().toString(36) +
+      "-" +
+      Math.random().toString(36).slice(2, 8)
+    );
+  }
+
+  function selectedConfig(id) {
+    var value = $(id).val();
+    return value ? RED.nodes.node(value) : null;
+  }
+
+  function filterConfigSelect(selectId, predicate) {
+    var current = $(selectId).val();
+    var currentVisible = false;
+
+    $(selectId)
+      .children("option")
+      .each(function () {
+        var option = $(this);
+        var value = option.attr("value");
+
+        if (!value || value === "_ADD_") {
+          option.show();
+          return;
+        }
+
+        var config = RED.nodes.node(value);
+        var visible = !config || predicate(config);
+        option.toggle(visible);
+        if (visible && value === current) currentVisible = true;
+      });
+
+    if (current && !currentVisible) {
+      $(selectId).val("");
+    }
+  }
+
+  RED.nodes.registerType("orangescada-driver-config", {
+    category: "config",
     defaults: {
       name: { value: "" },
       host: { value: "192.168.0.102", required: true },
@@ -15,67 +55,200 @@
     credentials: {
       password: { type: "password" },
     },
-    inputs: 0,
+    label: function () {
+      return this.name || this.uid || "OrangeScada Driver";
+    },
+  });
+
+  RED.nodes.registerType("orangescada-node-config", {
+    category: "config",
+    defaults: {
+      name: { value: "", required: true },
+      uid: { value: "" },
+      driver: { type: "orangescada-driver-config", required: true },
+    },
+    label: function () {
+      return this.name || "OrangeScada Node";
+    },
+    oneditprepare: function () {
+      if (!$("#node-config-input-uid").val()) {
+        $("#node-config-input-uid").val(osUid("node"));
+      }
+    },
+  });
+
+  RED.nodes.registerType("orangescada-device-config", {
+    category: "config",
+    defaults: {
+      name: { value: "", required: true },
+      uid: { value: "" },
+      node: { type: "orangescada-node-config", required: true },
+    },
+    label: function () {
+      return this.name || "OrangeScada Device";
+    },
+    oneditprepare: function () {
+      if (!$("#node-config-input-uid").val()) {
+        $("#node-config-input-uid").val(osUid("device"));
+      }
+    },
+  });
+
+  RED.nodes.registerType("orangescada-tag", {
+    category: "network",
+    color: "#d8e8ff",
+    defaults: {
+      name: { value: "" },
+      driver: { type: "orangescada-driver-config", required: true },
+      node: { type: "orangescada-node-config", required: true },
+      device: { type: "orangescada-device-config", required: true },
+      tagUid: { value: "" },
+      tagName: { value: "", required: true },
+      tagType: { value: "float", required: true },
+      address: { value: 0, validate: RED.validators.number() },
+    },
+    inputs: 1,
     outputs: 1,
     icon: "bridge.svg",
     label: function () {
-      return this.name || "orangescada driver";
+      return this.name || this.tagName || "OrangeScadaTag";
+    },
+    oneditprepare: function () {
+      function refreshNodes() {
+        var driverId = $("#node-input-driver").val();
+        filterConfigSelect("#node-input-node", function (config) {
+          return config.driver === driverId;
+        });
+        refreshDevices();
+      }
+
+      function refreshDevices() {
+        var nodeId = $("#node-input-node").val();
+        filterConfigSelect("#node-input-device", function (config) {
+          return config.node === nodeId;
+        });
+      }
+
+      if (!$("#node-input-tagUid").val()) {
+        $("#node-input-tagUid").val(osUid("tag"));
+      }
+
+      $("#node-input-driver").on("change", refreshNodes);
+      $("#node-input-node").on("change", refreshDevices);
+
+      setTimeout(function () {
+        refreshNodes();
+        refreshDevices();
+      }, 0);
     },
   });
 </script>
 
-<script type="text/html" data-template-name="orangescada-driver">
+<script type="text/html" data-template-name="orangescada-driver-config">
   <div class="form-row">
-    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
-    <input type="text" id="node-input-name" placeholder="Name" />
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Driver" />
   </div>
   <div class="form-row">
-    <label for="node-input-host"><i class="fa fa-globe"></i> Host</label>
-    <input type="text" id="node-input-host" placeholder="192.168.0.102" />
+    <label for="node-config-input-host"><i class="fa fa-globe"></i> Host</label>
+    <input type="text" id="node-config-input-host" placeholder="192.168.0.102" />
   </div>
   <div class="form-row">
-    <label for="node-input-port"><i class="fa fa-plug"></i> Port</label>
-    <input type="number" id="node-input-port" placeholder="8891" />
+    <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>
+    <input type="number" id="node-config-input-port" placeholder="8891" />
   </div>
   <div class="form-row">
-    <label for="node-input-ssl"><i class="fa fa-lock"></i> SSL</label>
+    <label for="node-config-input-ssl"><i class="fa fa-lock"></i> SSL</label>
     <input
       type="checkbox"
-      id="node-input-ssl"
+      id="node-config-input-ssl"
       style="display:inline-block; width:auto; vertical-align:top;"
     />
   </div>
   <div class="form-row">
-    <label for="node-input-uid"><i class="fa fa-id-card"></i> Driver UID</label>
-    <input type="text" id="node-input-uid" placeholder="nodered" />
+    <label for="node-config-input-uid"><i class="fa fa-id-card"></i> UID</label>
+    <input type="text" id="node-config-input-uid" placeholder="nodered" />
   </div>
   <div class="form-row">
-    <label for="node-input-password"><i class="fa fa-key"></i> Password</label>
-    <input type="password" id="node-input-password" />
+    <label for="node-config-input-password"><i class="fa fa-key"></i> Password</label>
+    <input type="password" id="node-config-input-password" />
   </div>
   <div class="form-row">
-    <label for="node-input-version">
-      <i class="fa fa-code-fork"></i> Version
-    </label>
-    <input type="text" id="node-input-version" placeholder="0.1.0" />
+    <label for="node-config-input-version"><i class="fa fa-code-fork"></i> Version</label>
+    <input type="text" id="node-config-input-version" placeholder="0.1.0" />
   </div>
   <div class="form-row">
-    <label for="node-input-versionApi"><i class="fa fa-code"></i> API</label>
-    <input type="text" id="node-input-versionApi" placeholder="1.1" />
+    <label for="node-config-input-versionApi"><i class="fa fa-code"></i> API</label>
+    <input type="text" id="node-config-input-versionApi" placeholder="1.1" />
   </div>
   <div class="form-row">
-    <label for="node-input-reconnectMs">
-      <i class="fa fa-refresh"></i> Reconnect
-    </label>
-    <input type="number" id="node-input-reconnectMs" placeholder="5000" />
+    <label for="node-config-input-reconnectMs"><i class="fa fa-refresh"></i> Reconnect</label>
+    <input type="number" id="node-config-input-reconnectMs" placeholder="5000" />
   </div>
 </script>
 
-<script type="text/html" data-help-name="orangescada-driver">
-  <p>Connects Node-RED to OrangeScada as a universal API driver.</p>
-  <p>
-    Current minimal implementation supports <code>connect</code> and
-    <code>pingDriver</code>.
-  </p>
+<script type="text/html" data-template-name="orangescada-node-config">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Node" />
+  </div>
+  <input type="hidden" id="node-config-input-uid" />
+  <div class="form-row">
+    <label for="node-config-input-driver"><i class="fa fa-sitemap"></i> Driver</label>
+    <input type="text" id="node-config-input-driver" />
+  </div>
 </script>
 
+<script type="text/html" data-template-name="orangescada-device-config">
+  <div class="form-row">
+    <label for="node-config-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-config-input-name" placeholder="Device" />
+  </div>
+  <input type="hidden" id="node-config-input-uid" />
+  <div class="form-row">
+    <label for="node-config-input-node"><i class="fa fa-sitemap"></i> Node</label>
+    <input type="text" id="node-config-input-node" />
+  </div>
+</script>
+
+<script type="text/html" data-template-name="orangescada-tag">
+  <div class="form-row">
+    <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
+    <input type="text" id="node-input-name" placeholder="Node name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-driver"><i class="fa fa-sitemap"></i> Driver</label>
+    <input type="text" id="node-input-driver" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-node"><i class="fa fa-circle"></i> Node</label>
+    <input type="text" id="node-input-node" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-device"><i class="fa fa-microchip"></i> Device</label>
+    <input type="text" id="node-input-device" />
+  </div>
+  <input type="hidden" id="node-input-tagUid" />
+  <div class="form-row">
+    <label for="node-input-tagName"><i class="fa fa-tag"></i> Tag</label>
+    <input type="text" id="node-input-tagName" placeholder="Tag name" />
+  </div>
+  <div class="form-row">
+    <label for="node-input-tagType"><i class="fa fa-code"></i> Type</label>
+    <select id="node-input-tagType">
+      <option value="bool">bool</option>
+      <option value="int">int</option>
+      <option value="float">float</option>
+      <option value="string">string</option>
+    </select>
+  </div>
+  <div class="form-row">
+    <label for="node-input-address"><i class="fa fa-sort-numeric-asc"></i> Address</label>
+    <input type="number" id="node-input-address" placeholder="0" />
+  </div>
+</script>
+
+<script type="text/html" data-help-name="orangescada-tag">
+  <p>OrangeScadaTag describes one SCADA tag and its place in the Driver -> Node -> Device hierarchy.</p>
+  <p>Runtime value exchange is intentionally left for the next implementation stage.</p>
+</script>

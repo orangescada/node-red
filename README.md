@@ -1,4 +1,10 @@
-# Orangescada Node-RED driver
+# OrangeScada Node-RED driver
+
+Node-RED nodes for describing OrangeScada universal driver hierarchy:
+
+```text
+Driver -> Node -> Device -> Tag
+```
 
 ## Start
 
@@ -13,9 +19,7 @@ Open:
 http://localhost:1880
 ```
 
-Добавьте `orangescada driver` в flow и нажмите Deploy
-
-## Defaults
+## Driver defaults
 
 ```text
 Host: 192.168.0.102

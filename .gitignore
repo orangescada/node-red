@@ -1,11 +1,13 @@
 node_modules/
+data/
+lib/
+flows/
 package-lock.json
 npm-debug.log*
 
-# Node-RED runtime data created by `node-red -u .`
 flows.json
 flows_cred.json
 settings.js
 .config.*.json
 .config.*.json.backup
-
+.DS_Store

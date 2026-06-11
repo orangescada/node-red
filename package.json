@@ -4,7 +4,7 @@
   "description": "OrangeScada universal driver for Node-RED",
   "main": "nodes/driver.js",
   "scripts": {
-    "start": "node-red -u .",
+    "start": "node-red -s runtime-settings.js",
     "check": "node -c nodes/driver.js"
   },
   "keywords": [
