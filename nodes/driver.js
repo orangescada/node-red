@@ -11,6 +11,30 @@ const DEFAULT_VERSION_API = "1.1";
 const DEFAULT_RECONNECT_MS = 5000;
 
 module.exports = function registerOrangeScadaNodes(RED) {
+  function normalizeValue(type, value) {
+    if (value === null || value === undefined) return null;
+
+    switch (type) {
+      case "bool":
+        if (typeof value === "string") {
+          return value === "true" || value === "1";
+        }
+        return Boolean(value);
+      case "int": {
+        const numberValue = Number(value);
+        return Number.isFinite(numberValue) ? Math.trunc(numberValue) : null;
+      }
+      case "float": {
+        const numberValue = Number(value);
+        return Number.isFinite(numberValue) ? numberValue : null;
+      }
+      case "string":
+        return String(value);
+      default:
+        return value;
+    }
+  }
+
   function driverConfig(config) {
     RED.nodes.createNode(this, config);
 
@@ -101,6 +125,26 @@ module.exports = function registerOrangeScadaNodes(RED) {
       );
     }
 
+    function findTagByUid(tagUid) {
+      return Array.from(tags.values()).find((tag) => tag.uid === tagUid);
+    }
+
+    function hasTag(tagUid) {
+      return Array.from(tags.values()).some((tag) => tag.uid === tagUid);
+    }
+
+    function hasNodeUid(nodeUid, nodeId) {
+      return Array.from(tags.values()).some(
+        (tag) => tag.node.uid === nodeUid && tag.node.id !== nodeId,
+      );
+    }
+
+    function hasDeviceUid(deviceUid, deviceId) {
+      return Array.from(tags.values()).some(
+        (tag) => tag.device.uid === deviceUid && tag.device.id !== deviceId,
+      );
+    }
+
     function getNodes() {
       return uniqueByUid(Array.from(tags.values()).map((tag) => tag.node)).map(
         (item) => ({
@@ -168,6 +212,17 @@ module.exports = function registerOrangeScadaNodes(RED) {
       });
     }
 
+    function handleGetTagsValues(request) {
+      const deviceUid = request.deviceUid || request.uid;
+      const values = (request.tags || []).map((tagUid) => {
+        const item = deviceUid
+          ? findTag(deviceUid, tagUid)
+          : findTagByUid(tagUid);
+        return item ? item.getValue() : null;
+      });
+      return reply(request, { values });
+    }
+
     function handlePacket(packet) {
       switch (packet.cmd) {
         case "connect":
@@ -199,6 +254,8 @@ module.exports = function registerOrangeScadaNodes(RED) {
           });
         case "getTag":
           return handleGetTag(packet);
+        case "getTagsValues":
+          return handleGetTagsValues(packet);
         default:
           return errorReply(packet, "Command not implemented");
       }
@@ -276,6 +333,9 @@ module.exports = function registerOrangeScadaNodes(RED) {
     });
 
     node.driverUid = uid;
+    node.hasTag = hasTag;
+    node.hasNodeUid = hasNodeUid;
+    node.hasDeviceUid = hasDeviceUid;
     node.registerTag = function registerTag(tag) {
       tags.set(tag.id, tag);
     };
@@ -310,6 +370,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
     node.tagName = config.tagName;
     node.tagType = config.tagType;
     node.address = Number(config.address || 0);
+    node.currentValue = null;
 
     function buildMeta() {
       return {
@@ -322,12 +383,32 @@ module.exports = function registerOrangeScadaNodes(RED) {
     }
 
     if (node.driver && node.commNode && node.device) {
+      if (node.driver.hasNodeUid(node.commNode.uid, node.commNode.id)) {
+        node.warn(
+          `duplicate node uid "${node.commNode.uid}", fix the copied config node before deploying`,
+        );
+      }
+
+      if (node.driver.hasDeviceUid(node.device.uid, node.device.id)) {
+        node.warn(
+          `duplicate device uid "${node.device.uid}", fix the copied config node before deploying`,
+        );
+      }
+
+      if (node.driver.hasTag(node.tagUid)) {
+        node.warn(
+          `duplicate tag uid "${node.tagUid}", using node id "${node.id}"`,
+        );
+        node.tagUid = node.id;
+      }
+
       node.driver.registerTag({
         id: node.id,
         uid: node.tagUid,
         name: node.tagName,
         type: node.tagType,
         address: node.address,
+        getValue: () => node.currentValue,
         node: {
           id: node.commNode.id,
           uid: node.commNode.uid,
@@ -343,6 +424,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
     }
 
     node.on("input", (msg, send, done) => {
+      node.currentValue = normalizeValue(node.tagType, msg.payload);
       msg.orangescada = buildMeta();
       send(msg);
       if (done) done();

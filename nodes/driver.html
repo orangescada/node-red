@@ -40,6 +40,88 @@
     }
   }
 
+  function uidExistsInConfigs(type, uid, currentId, sameParent) {
+    var exists = false;
+    RED.nodes.eachConfig(function (config) {
+      if (exists || config.id === currentId || config.type !== type) return;
+      if (config.uid !== uid) return;
+      exists = !sameParent || sameParent(config);
+    });
+    return exists;
+  }
+
+  function uidExistsInNodes(type, uid, currentId, sameParent) {
+    var exists = false;
+    RED.nodes.eachNode(function (node) {
+      if (exists || node.id === currentId || node.type !== type) return;
+      if (node.tagUid !== uid) return;
+      exists = !sameParent || sameParent(node);
+    });
+    return exists;
+  }
+
+  function showUidWarning(selector, message) {
+    var warning = $(selector);
+    if (!warning.length) return;
+    warning.text(message || "");
+    warning.toggle(Boolean(message));
+  }
+
+  function ensureConfigUidForNode(configNode, prefix, type, sameParent) {
+    var uid = configNode.uid;
+    var originalUid = uid;
+    while (
+      !uid ||
+      uidExistsInConfigs(type, uid, configNode.id, function (node) {
+        return !sameParent || sameParent(node, configNode);
+      })
+    ) {
+      uid = osUid(prefix);
+    }
+    configNode.uid = uid;
+    return uid !== originalUid;
+  }
+
+  function ensureConfigUid(inputId, prefix, type, currentId, sameParent, warningId) {
+    var input = $(inputId);
+    var configNode = {
+      id: currentId,
+      uid: input.val(),
+    };
+    var changed = ensureConfigUidForNode(configNode, prefix, type, sameParent);
+    input.val(configNode.uid);
+    showUidWarning(
+      warningId,
+      changed ? "Duplicate or missing UID was regenerated." : "",
+    );
+  }
+
+  function ensureTagUidForNode(tagNode) {
+    var uid = tagNode.tagUid;
+    var originalUid = uid;
+
+    while (
+      !uid ||
+      uidExistsInNodes("orangescada-tag", uid, tagNode.id)
+    ) {
+      uid = osUid("tag");
+    }
+    tagNode.tagUid = uid;
+    return uid !== originalUid;
+  }
+
+  function ensureTagUid(currentId) {
+    var input = $("#node-input-tagUid");
+    var tagNode = {
+      id: currentId,
+      tagUid: input.val(),
+      device: $("#node-input-device").val(),
+    };
+    var changed = ensureTagUidForNode(tagNode);
+    input.val(tagNode.tagUid);
+    showUidWarning("#node-input-uid-warning", changed ? "Duplicate or missing UID was regenerated." : "");
+  }
+
   RED.nodes.registerType("orangescada-driver-config", {
     category: "config",
     defaults: {
@@ -70,10 +152,43 @@
     label: function () {
       return this.name || "OrangeScada Node";
     },
-    oneditprepare: function () {
-      if (!$("#node-config-input-uid").val()) {
-        $("#node-config-input-uid").val(osUid("node"));
+    onadd: function () {
+      if (
+        ensureConfigUidForNode(
+          this,
+          "node",
+          "orangescada-node-config",
+          function (config, current) {
+            return config.driver === current.driver;
+          },
+        )
+      ) {
+        this.changed = true;
       }
+    },
+    oneditprepare: function () {
+      ensureConfigUid(
+        "#node-config-input-uid",
+        "node",
+        "orangescada-node-config",
+        this.id,
+        function (config, current) {
+          return config.driver === (current.driver || $("#node-config-input-driver").val());
+        },
+        "#node-config-input-uid-warning",
+      );
+    },
+    oneditsave: function () {
+      ensureConfigUid(
+        "#node-config-input-uid",
+        "node",
+        "orangescada-node-config",
+        this.id,
+        function (config, current) {
+          return config.driver === (current.driver || $("#node-config-input-driver").val());
+        },
+        "#node-config-input-uid-warning",
+      );
     },
   });
 
@@ -87,10 +202,51 @@
     label: function () {
       return this.name || "OrangeScada Device";
     },
-    oneditprepare: function () {
-      if (!$("#node-config-input-uid").val()) {
-        $("#node-config-input-uid").val(osUid("device"));
+    onadd: function () {
+      if (
+        ensureConfigUidForNode(
+          this,
+          "device",
+          "orangescada-device-config",
+          function (config, current) {
+            var selectedNode = RED.nodes.node(current.node);
+            var configNode = RED.nodes.node(config.node);
+            return selectedNode && configNode && selectedNode.driver === configNode.driver;
+          },
+        )
+      ) {
+        this.changed = true;
       }
+    },
+    oneditprepare: function () {
+      ensureConfigUid(
+        "#node-config-input-uid",
+        "device",
+        "orangescada-device-config",
+        this.id,
+        function (config) {
+          var selectedNodeId = $("#node-config-input-node").val();
+          var selectedNode = RED.nodes.node(selectedNodeId);
+          var configNode = RED.nodes.node(config.node);
+          return selectedNode && configNode && selectedNode.driver === configNode.driver;
+        },
+        "#node-config-input-uid-warning",
+      );
+    },
+    oneditsave: function () {
+      ensureConfigUid(
+        "#node-config-input-uid",
+        "device",
+        "orangescada-device-config",
+        this.id,
+        function (config) {
+          var selectedNodeId = $("#node-config-input-node").val();
+          var selectedNode = RED.nodes.node(selectedNodeId);
+          var configNode = RED.nodes.node(config.node);
+          return selectedNode && configNode && selectedNode.driver === configNode.driver;
+        },
+        "#node-config-input-uid-warning",
+      );
     },
   });
 
@@ -113,6 +269,11 @@
     label: function () {
       return this.name || this.tagName || "OrangeScadaTag";
     },
+    onadd: function () {
+      if (ensureTagUidForNode(this)) {
+        this.changed = true;
+      }
+    },
     oneditprepare: function () {
       function refreshNodes() {
         var driverId = $("#node-input-driver").val();
@@ -129,17 +290,20 @@
         });
       }
 
-      if (!$("#node-input-tagUid").val()) {
-        $("#node-input-tagUid").val(osUid("tag"));
-      }
-
       $("#node-input-driver").on("change", refreshNodes);
       $("#node-input-node").on("change", refreshDevices);
+      $("#node-input-device").on("change", function () {
+        ensureTagUid(this.id);
+      }.bind(this));
 
       setTimeout(function () {
         refreshNodes();
         refreshDevices();
-      }, 0);
+        ensureTagUid(this.id);
+      }.bind(this), 0);
+    },
+    oneditsave: function () {
+      ensureTagUid(this.id);
     },
   });
 </script>
@@ -193,6 +357,11 @@
     <input type="text" id="node-config-input-name" placeholder="Node" />
   </div>
   <input type="hidden" id="node-config-input-uid" />
+  <div
+    class="form-row"
+    id="node-config-input-uid-warning"
+    style="display:none; color:#a94442;"
+  ></div>
   <div class="form-row">
     <label for="node-config-input-driver"><i class="fa fa-sitemap"></i> Driver</label>
     <input type="text" id="node-config-input-driver" />
@@ -205,6 +374,11 @@
     <input type="text" id="node-config-input-name" placeholder="Device" />
   </div>
   <input type="hidden" id="node-config-input-uid" />
+  <div
+    class="form-row"
+    id="node-config-input-uid-warning"
+    style="display:none; color:#a94442;"
+  ></div>
   <div class="form-row">
     <label for="node-config-input-node"><i class="fa fa-sitemap"></i> Node</label>
     <input type="text" id="node-config-input-node" />
@@ -229,6 +403,11 @@
     <input type="text" id="node-input-device" />
   </div>
   <input type="hidden" id="node-input-tagUid" />
+  <div
+    class="form-row"
+    id="node-input-uid-warning"
+    style="display:none; color:#a94442;"
+  ></div>
   <div class="form-row">
     <label for="node-input-tagName"><i class="fa fa-tag"></i> Tag</label>
     <input type="text" id="node-input-tagName" placeholder="Tag name" />
@@ -250,5 +429,5 @@
 
 <script type="text/html" data-help-name="orangescada-tag">
   <p>OrangeScadaTag describes one SCADA tag and its place in the Driver -> Node -> Device hierarchy.</p>
-  <p>Runtime value exchange is intentionally left for the next implementation stage.</p>
+  <p>Input <code>msg.payload</code> becomes the current tag value for synchronous SCADA reads.</p>
 </script>
