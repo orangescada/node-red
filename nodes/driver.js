@@ -63,6 +63,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
     const tags = new Map();
     const subscriptions = new Map();
     const pendingAsyncValues = new Map();
+    const lastAsyncValues = new Map();
 
     function nextAsyncTransID() {
       const transID = asyncTransID;
@@ -238,33 +239,59 @@ module.exports = function registerOrangeScadaNodes(RED) {
     function getRequestedTagUids(request) {
       return (request.tags || []).flatMap((item) => {
         if (typeof item === "string") return [item];
+        if (item && typeof item === "object" && item.uid) return [item.uid];
+        if (item && typeof item === "object" && item.tagUid) {
+          return [item.tagUid];
+        }
         if (item && typeof item === "object") return Object.keys(item);
         return [];
       });
     }
 
-    function prunePendingValues(deviceUid) {
-      const pending = pendingAsyncValues.get(deviceUid);
-      if (!pending) return;
+    function valuesEqual(left, right) {
+      return Object.is(left, right);
+    }
+
+    function getDeviceValues(storage, deviceUid) {
+      if (!storage.has(deviceUid)) storage.set(deviceUid, new Map());
+      return storage.get(deviceUid);
+    }
+
+    function removeDeviceValue(storage, deviceUid, tagUid) {
+      const values = storage.get(deviceUid);
+      if (!values) return;
+      values.delete(tagUid);
+      if (values.size === 0) storage.delete(deviceUid);
+    }
+
+    function pruneLastAsyncValues(deviceUid) {
+      const lastValues = lastAsyncValues.get(deviceUid);
+      if (!lastValues) return;
 
       const subscribed = subscriptions.get(deviceUid);
-      Array.from(pending.keys()).forEach((tagUid) => {
-        if (!subscribed || !subscribed.has(tagUid)) pending.delete(tagUid);
+      Array.from(lastValues.keys()).forEach((tagUid) => {
+        if (!subscribed || !subscribed.has(tagUid)) lastValues.delete(tagUid);
       });
 
-      if (pending.size === 0) pendingAsyncValues.delete(deviceUid);
+      if (lastValues.size === 0) lastAsyncValues.delete(deviceUid);
     }
 
     function replaceDeviceSubscription(deviceUid, tagUids) {
       if (tagUids.length === 0) {
         subscriptions.delete(deviceUid);
         pendingAsyncValues.delete(deviceUid);
-        return;
+        lastAsyncValues.delete(deviceUid);
+        return [];
       }
 
       const nextSubscription = new Set();
+      const nextTags = [];
       tagUids.forEach((tagUid) => {
-        if (findTag(deviceUid, tagUid)) nextSubscription.add(tagUid);
+        if (nextSubscription.has(tagUid)) return;
+        const tag = findTag(deviceUid, tagUid);
+        if (!tag) return;
+        nextSubscription.add(tagUid);
+        nextTags.push(tag);
       });
 
       if (nextSubscription.size > 0) {
@@ -272,7 +299,77 @@ module.exports = function registerOrangeScadaNodes(RED) {
       } else {
         subscriptions.delete(deviceUid);
       }
-      prunePendingValues(deviceUid);
+      pendingAsyncValues.delete(deviceUid);
+      pruneLastAsyncValues(deviceUid);
+      return nextTags;
+    }
+
+    function sendAsyncValues(deviceUid, values) {
+      return send({
+        cmd: "asyncTagsValues",
+        transID: nextAsyncTransID(),
+        deviceUid,
+        values,
+      });
+    }
+
+    function sendSubscriptionSnapshot(subscribedTags) {
+      const valuesByDevice = new Map();
+
+      subscribedTags.forEach((tag) => {
+        const value = tag.getValue();
+        const lastValues = lastAsyncValues.get(tag.device.uid);
+        const hasLastValue = Boolean(lastValues && lastValues.has(tag.uid));
+        if (hasLastValue && valuesEqual(value, lastValues.get(tag.uid))) {
+          return;
+        }
+
+        const values = getDeviceValues(valuesByDevice, tag.device.uid);
+        values.set(tag.uid, value);
+      });
+
+      valuesByDevice.forEach((valuesByTag, deviceUid) => {
+        const values = {};
+        valuesByTag.forEach((value, tagUid) => {
+          values[tagUid] = value;
+        });
+
+        if (!sendAsyncValues(deviceUid, values)) return;
+
+        const lastValues = getDeviceValues(lastAsyncValues, deviceUid);
+        valuesByTag.forEach((value, tagUid) => {
+          lastValues.set(tagUid, value);
+        });
+        lastAsyncFlushAt = Date.now();
+      });
+    }
+
+    function replaceAllSubscriptions(tagUids) {
+      if (tagUids.length === 0) {
+        subscriptions.clear();
+        pendingAsyncValues.clear();
+        lastAsyncValues.clear();
+        return [];
+      }
+
+      const tagUidsByDevice = new Map();
+      tagUids.forEach((tagUid) => {
+        const tag = findTagByUid(tagUid);
+        if (!tag) return;
+        getDeviceValues(tagUidsByDevice, tag.device.uid).set(tag.uid, true);
+      });
+
+      Array.from(subscriptions.keys()).forEach((deviceUid) => {
+        if (tagUidsByDevice.has(deviceUid)) return;
+        subscriptions.delete(deviceUid);
+        pendingAsyncValues.delete(deviceUid);
+        lastAsyncValues.delete(deviceUid);
+      });
+
+      return Array.from(tagUidsByDevice.entries()).flatMap(
+        ([deviceUid, valuesByTag]) =>
+          replaceDeviceSubscription(deviceUid, Array.from(valuesByTag.keys())),
+      );
     }
 
     function handleSetTagsSubscribe(request) {
@@ -280,23 +377,16 @@ module.exports = function registerOrangeScadaNodes(RED) {
       const deviceUid = request.deviceUid || request.uid;
 
       if (deviceUid) {
-        replaceDeviceSubscription(deviceUid, tagUids);
-        return reply(request);
+        const subscribedTags = replaceDeviceSubscription(deviceUid, tagUids);
+        const result = reply(request);
+        sendSubscriptionSnapshot(subscribedTags);
+        return result;
       }
 
-      subscriptions.clear();
-      pendingAsyncValues.clear();
-
-      tagUids.forEach((tagUid) => {
-        const tag = findTagByUid(tagUid);
-        if (!tag) return;
-        if (!subscriptions.has(tag.device.uid)) {
-          subscriptions.set(tag.device.uid, new Set());
-        }
-        subscriptions.get(tag.device.uid).add(tag.uid);
-      });
-
-      return reply(request);
+      const subscribedTags = replaceAllSubscriptions(tagUids);
+      const result = reply(request);
+      sendSubscriptionSnapshot(subscribedTags);
+      return result;
     }
 
     function isSubscribed(tag) {
@@ -315,10 +405,16 @@ module.exports = function registerOrangeScadaNodes(RED) {
     function bufferAsyncValue(tag) {
       if (!isSubscribed(tag)) return;
 
-      if (!pendingAsyncValues.has(tag.device.uid)) {
-        pendingAsyncValues.set(tag.device.uid, new Map());
+      const value = tag.getValue();
+      const lastValues = lastAsyncValues.get(tag.device.uid);
+      const hasLastValue = Boolean(lastValues && lastValues.has(tag.uid));
+
+      if (hasLastValue && valuesEqual(value, lastValues.get(tag.uid))) {
+        removeDeviceValue(pendingAsyncValues, tag.device.uid, tag.uid);
+        return;
       }
-      pendingAsyncValues.get(tag.device.uid).set(tag.uid, tag.getValue());
+
+      getDeviceValues(pendingAsyncValues, tag.device.uid).set(tag.uid, value);
       scheduleAsyncFlush();
     }
 
@@ -332,11 +428,11 @@ module.exports = function registerOrangeScadaNodes(RED) {
           values[tagUid] = value;
         });
 
-        send({
-          cmd: "asyncTagsValues",
-          transID: nextAsyncTransID(),
-          deviceUid,
-          values,
+        if (!sendAsyncValues(deviceUid, values)) return;
+
+        const lastValues = getDeviceValues(lastAsyncValues, deviceUid);
+        valuesByTag.forEach((value, tagUid) => {
+          lastValues.set(tagUid, value);
         });
       });
 
@@ -423,6 +519,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
       buffer = "";
       subscriptions.clear();
       pendingAsyncValues.clear();
+      lastAsyncValues.clear();
       if (socket) {
         socket.destroy();
         socket = null;
@@ -481,6 +578,8 @@ module.exports = function registerOrangeScadaNodes(RED) {
           pending.delete(tag.uid);
           if (pending.size === 0) pendingAsyncValues.delete(tag.device.uid);
         }
+
+        removeDeviceValue(lastAsyncValues, tag.device.uid, tag.uid);
       }
       tags.delete(id);
     };
