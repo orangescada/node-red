@@ -227,7 +227,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
 
     function handleGetTagsValues(request) {
       const deviceUid = request.deviceUid || request.uid;
-      const values = (request.tags || []).map((tagUid) => {
+      const values = getRequestedTagUids(request).map((tagUid) => {
         const item = deviceUid
           ? findTag(deviceUid, tagUid)
           : findTagByUid(tagUid);
@@ -237,7 +237,13 @@ module.exports = function registerOrangeScadaNodes(RED) {
     }
 
     function getRequestedTagUids(request) {
-      return (request.tags || []).flatMap((item) => {
+      const requestTags = request.tags || [];
+      if (!Array.isArray(requestTags)) {
+        if (typeof requestTags === "object") return Object.keys(requestTags);
+        return [];
+      }
+
+      return requestTags.flatMap((item) => {
         if (typeof item === "string") return [item];
         if (item && typeof item === "object" && item.uid) return [item.uid];
         if (item && typeof item === "object" && item.tagUid) {
@@ -245,6 +251,52 @@ module.exports = function registerOrangeScadaNodes(RED) {
         }
         if (item && typeof item === "object") return Object.keys(item);
         return [];
+      });
+    }
+
+    function getSetTagValues(request) {
+      const requestTags = request.tags || [];
+
+      if (Array.isArray(request.values)) {
+        if (!Array.isArray(requestTags)) return [];
+
+        return requestTags.flatMap((item, index) => {
+          const tagUid =
+            typeof item === "string"
+              ? item
+              : item && typeof item === "object"
+                ? item.uid || item.tagUid
+                : null;
+          return tagUid ? [{ tagUid, value: request.values[index] }] : [];
+        });
+      }
+
+      if (!Array.isArray(requestTags)) {
+        if (typeof requestTags !== "object") return [];
+        return Object.keys(requestTags).map((tagUid) => ({
+          tagUid,
+          value: requestTags[tagUid],
+        }));
+      }
+
+      return requestTags.flatMap((item) => {
+        if (!item || typeof item !== "object") return [];
+
+        if (item.uid && Object.prototype.hasOwnProperty.call(item, "value")) {
+          return [{ tagUid: item.uid, value: item.value }];
+        }
+
+        if (
+          item.tagUid &&
+          Object.prototype.hasOwnProperty.call(item, "value")
+        ) {
+          return [{ tagUid: item.tagUid, value: item.value }];
+        }
+
+        return Object.keys(item).map((tagUid) => ({
+          tagUid,
+          value: item[tagUid],
+        }));
       });
     }
 
@@ -389,6 +441,30 @@ module.exports = function registerOrangeScadaNodes(RED) {
       return result;
     }
 
+    function handleSetTagsValues(request) {
+      const deviceUid = request.deviceUid || request.uid;
+      if (deviceUid && !findDevice(deviceUid)) {
+        return errorReply(request, "Device ID not found");
+      }
+
+      const tagValues = getSetTagValues(request);
+      const writes = tagValues.map((item) => ({
+        tag: deviceUid
+          ? findTag(deviceUid, item.tagUid)
+          : findTagByUid(item.tagUid),
+        value: item.value,
+      }));
+
+      const missing = writes.find((item) => !item.tag);
+      if (missing) return errorReply(request, "ID not found");
+
+      writes.forEach((item) => {
+        item.tag.writeValue(item.value);
+      });
+
+      return reply(request);
+    }
+
     function isSubscribed(tag) {
       const subscribed = subscriptions.get(tag.device.uid);
       return Boolean(subscribed && subscribed.has(tag.uid));
@@ -473,6 +549,8 @@ module.exports = function registerOrangeScadaNodes(RED) {
           return handleGetTag(packet);
         case "getTagsValues":
           return handleGetTagsValues(packet);
+        case "setTagsValues":
+          return handleSetTagsValues(packet);
         case "setTagsSubscribe":
           return handleSetTagsSubscribe(packet);
         case "asyncTagsValues":
@@ -483,16 +561,21 @@ module.exports = function registerOrangeScadaNodes(RED) {
     }
 
     function handleLine(line) {
+      let packet;
       try {
-        const packet = JSON.parse(line);
-        node.log(`recv ${JSON.stringify(packet)}`);
-        Promise.resolve(handlePacket(packet)).catch((err) => {
+        packet = JSON.parse(line);
+      } catch (err) {
+        node.error(`OrangeScada JSON parse error: ${err.message}`);
+        return;
+      }
+
+      node.log(`recv ${JSON.stringify(packet)}`);
+      Promise.resolve()
+        .then(() => handlePacket(packet))
+        .catch((err) => {
           node.error(`OrangeScada command error: ${err.message}`);
           errorReply(packet, err.message);
         });
-      } catch (err) {
-        node.error(`OrangeScada JSON parse error: ${err.message}`);
-      }
     }
 
     function handleData(chunk) {
@@ -628,6 +711,13 @@ module.exports = function registerOrangeScadaNodes(RED) {
       };
     }
 
+    function sendWriteMessage(value) {
+      node.send({
+        payload: normalizeValue(node.tagType, value),
+        orangescada: buildMeta(),
+      });
+    }
+
     if (node.driver && node.commNode && node.device) {
       if (node.driver.hasNodeUid(node.commNode.uid, node.commNode.id)) {
         node.warn(
@@ -655,6 +745,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
         type: node.tagType,
         address: node.address,
         getValue: () => node.currentValue,
+        writeValue: sendWriteMessage,
         node: {
           id: node.commNode.id,
           uid: node.commNode.uid,
