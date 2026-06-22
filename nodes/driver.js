@@ -763,8 +763,6 @@ module.exports = function registerOrangeScadaNodes(RED) {
     node.on("input", (msg, send, done) => {
       node.currentValue = normalizeValue(node.tagType, msg.payload);
       if (node.driver) node.driver.notifyTagValueChanged(node.id);
-      msg.orangescada = buildMeta();
-      send(msg);
       if (done) done();
     });
 
