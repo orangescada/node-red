@@ -10,6 +10,9 @@ const DEFAULT_VERSION = "0.1.0";
 const DEFAULT_VERSION_API = "1.1";
 const DEFAULT_RECONNECT_MS = 5000;
 const MIN_ASYNC_NOTIFY_MS = 1000;
+const UNSUPPORTED_EDITOR_COMMAND_ERROR =
+  "Command not support, use Node-RED thread editor instead";
+const INVALID_COMMAND_ERROR = "Invalid command";
 
 module.exports = function registerOrangeScadaNodes(RED) {
   function normalizeValue(type, value) {
@@ -44,8 +47,6 @@ module.exports = function registerOrangeScadaNodes(RED) {
     const port = Number(config.port || DEFAULT_PORT);
     const ssl = Boolean(config.ssl);
     const uid = config.uid || DEFAULT_UID;
-    const version = config.version || DEFAULT_VERSION;
-    const versionApi = config.versionApi || DEFAULT_VERSION_API;
     const reconnectMs = Number(config.reconnectMs || DEFAULT_RECONNECT_MS);
     const password =
       node.credentials && node.credentials.password
@@ -83,8 +84,8 @@ module.exports = function registerOrangeScadaNodes(RED) {
       const packet = {
         cmd: "connect",
         uid,
-        version,
-        versionApi,
+        version: DEFAULT_VERSION,
+        versionApi: DEFAULT_VERSION_API,
         transID: 0,
       };
       if (password) packet.password = password;
@@ -533,6 +534,10 @@ module.exports = function registerOrangeScadaNodes(RED) {
           return reply(packet, { active: Boolean(findNode(packet.uid)) });
         case "getNode":
           return handleGetNode(packet);
+        case "setNode":
+        case "addNode":
+        case "deleteNode":
+          return errorReply(packet, UNSUPPORTED_EDITOR_COMMAND_ERROR);
         case "getDevices":
           return reply(packet, {
             devices: getDevices(packet.nodeUid || packet.uid),
@@ -541,12 +546,20 @@ module.exports = function registerOrangeScadaNodes(RED) {
           return reply(packet, { active: Boolean(findDevice(packet.uid)) });
         case "getDevice":
           return handleGetDevice(packet);
+        case "setDevice":
+        case "addDevice":
+        case "deleteDevice":
+          return errorReply(packet, UNSUPPORTED_EDITOR_COMMAND_ERROR);
         case "getTags":
           return reply(packet, {
             tags: getTags(packet.deviceUid, packet.isOptions),
           });
         case "getTag":
           return handleGetTag(packet);
+        case "setTag":
+        case "addTag":
+        case "deleteTag":
+          return errorReply(packet, UNSUPPORTED_EDITOR_COMMAND_ERROR);
         case "getTagsValues":
           return handleGetTagsValues(packet);
         case "setTagsValues":
@@ -556,7 +569,7 @@ module.exports = function registerOrangeScadaNodes(RED) {
         case "asyncTagsValues":
           return;
         default:
-          return errorReply(packet, "Command not implemented");
+          return errorReply(packet, INVALID_COMMAND_ERROR);
       }
     }
 

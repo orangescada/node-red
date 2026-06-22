@@ -130,8 +130,6 @@
       port: { value: 8891, required: true, validate: RED.validators.number() },
       ssl: { value: false },
       uid: { value: "nodered", required: true },
-      version: { value: "0.1.0" },
-      versionApi: { value: "1.1" },
       reconnectMs: { value: 5000, validate: RED.validators.number() },
     },
     credentials: {
@@ -251,7 +249,7 @@
   });
 
   RED.nodes.registerType("orangescada-tag", {
-    category: "network",
+    category: "OrangeScada",
     color: "#d8e8ff",
     defaults: {
       name: { value: "" },
@@ -336,14 +334,6 @@
   <div class="form-row">
     <label for="node-config-input-password"><i class="fa fa-key"></i> Password</label>
     <input type="password" id="node-config-input-password" />
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-version"><i class="fa fa-code-fork"></i> Version</label>
-    <input type="text" id="node-config-input-version" placeholder="0.1.0" />
-  </div>
-  <div class="form-row">
-    <label for="node-config-input-versionApi"><i class="fa fa-code"></i> API</label>
-    <input type="text" id="node-config-input-versionApi" placeholder="1.1" />
   </div>
   <div class="form-row">
     <label for="node-config-input-reconnectMs"><i class="fa fa-refresh"></i> Reconnect</label>
