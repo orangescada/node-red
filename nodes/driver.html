@@ -126,7 +126,7 @@
     category: "config",
     defaults: {
       name: { value: "" },
-      host: { value: "192.168.0.102", required: true },
+      host: { value: "localhost", required: true },
       port: { value: 8891, required: true, validate: RED.validators.number() },
       ssl: { value: false },
       uid: { value: "nodered", required: true },
@@ -313,7 +313,7 @@
   </div>
   <div class="form-row">
     <label for="node-config-input-host"><i class="fa fa-globe"></i> Host</label>
-    <input type="text" id="node-config-input-host" placeholder="192.168.0.102" />
+    <input type="text" id="node-config-input-host" placeholder="localhost" />
   </div>
   <div class="form-row">
     <label for="node-config-input-port"><i class="fa fa-plug"></i> Port</label>

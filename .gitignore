@@ -11,3 +11,4 @@ settings.js
 .config.*.json
 .config.*.json.backup
 .DS_Store
+.flows.json.backup

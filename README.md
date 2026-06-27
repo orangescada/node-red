@@ -22,7 +22,7 @@ http://localhost:1880
 ## Driver defaults
 
 ```text
-Host: 192.168.0.102
+Host: localhost
 Port: 8891
 SSL: off
 Driver UID: nodered
