@@ -4,7 +4,7 @@ const net = require("net");
 const tls = require("tls");
 
 const DEFAULT_HOST = "localhost";
-const DEFAULT_PORT = 8891;
+const DEFAULT_PORT = 8892;
 const DEFAULT_UID = "nodered";
 const DEFAULT_VERSION = "1.0";
 const DEFAULT_VERSION_API = "1.1";
