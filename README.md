@@ -23,7 +23,7 @@ http://localhost:1880
 
 ```text
 Host: localhost
-Port: 8891
+Port: 8892
 SSL: off
 Driver UID: nodered
 Password: empty
